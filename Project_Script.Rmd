@@ -1,0 +1,467 @@
+---
+title: "Data Visualization Project"
+author: "by smurfs"
+date: "May 19, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message=FALSE,cache=FALSE)
+```
+
+
+# Project description
+
+Given are the color specifications for 64 colors arranged in an $8 \times 8$ grid. The master specifications in the Lab scale for these colors are provided in the `MasterColorCard.csv` file. On one sheet, this grid is printed 42 times in a $7 \times 6$ layout. There are 13 of these sheets. The $64 \times 7 \times 6 \times 13$ Lab values of these colors are provided in the `LabMeasurements-Color-Card.csv` file. Using Data Visualization principles, the task of the project is to compare how the Lab values in the sheets compare with the master values.
+
+
+\begin{eqnarray}
+\Delta L &=& L_{\rm measured} - L_{\rm master} \nonumber \\
+\Delta a &=& a_{\rm measured} - a_{\rm master} \nonumber \\
+\Delta b &=& b_{\rm measured} - b_{\rm master} \nonumber \\
+\Delta E &=& \sqrt{\Delta L^2 + \Delta a^2 + \Delta b^2}
+\end{eqnarray}
+
+
+# 1. Data processing
+
+## 1a. Find the $\Delta$ values
+
+We have checked that there are no missing values in the Lab measurements. We first arrange the data in an easy to use manner. The Lab measurements are in a wide format, wherein the L, a or b values for one of the 64 colors specifies a column. Thus there are $64 \times 3 = 192$ columns for these values. Each row of lcc corresponds to one of the 42 positions of the $8 \times 8$ grid on a particular sheet, specified by the `Row` and `Column` columns in lcc.
+
+We process the data first by replacing the L, a and b values by $\Delta L$, $\Delta a$ and $\Delta b$. For this we write the following function.
+
+```{r}
+setwd("/home/kbhaskar/beuth/Semester2/DataVisualization/Project1")
+
+mcc <- read.csv2("MasterColorCard.csv")
+lcc <- read.csv2("LabMeasurements-Color-Card.csv")
+
+# Add the sheet number
+lcc$Sheet <- rep(1:13 , 42)
+
+#function for calculating delta_L, delta_a and delta_b
+find_delta_Lab <- function() {
+  
+  
+  lcc_color_cols <- names(lcc)[!(names(lcc) %in% c("Row","Column","Sheet"))]
+  
+  # find delta_L = L_lab - L_master, delta_a = a_lab - a_master and delta_b = b_lab - b_master
+  lcc_deltas <- lcc
+  count <- 0L
+  for (color_col in lcc_color_cols) {
+    row_number <- 1L + (as.integer(count) %/% 3L) #this assigns the correct row in the mcc.
+    column_number <- 1L + (as.integer(count) %% 3L)#this assigns the correct column.
+    Lab_column <- c("L","a","b")[column_number]
+    lcc_deltas[[color_col]] <- lcc[[color_col]] - mcc[[Lab_column]][row_number]
+    count <- count + 1L
+  }
+  return(lcc_deltas)
+}
+
+lcc_deltas <- find_delta_Lab()
+
+# The columns of lcc_deltas contains the delta_L, delta_a and delta_b for each color.
+```
+
+## 1b. Change from wide to long format
+
+```{r, fig.width=12, fig.height=8}
+require(reshape)
+lcc_deltas_long <- melt(lcc_deltas , id = c("Row","Column","Sheet"))
+names(lcc_deltas_long) <- c("Row" , "Column" , "Sheet" , "Color" ,  "Delta")
+# contains delta values in long format. Has 64*42*13*3 rows.
+detach(package:reshape)
+
+L_deltas <- lcc_deltas_long[  grepl("L" , lcc_deltas_long$Color)   , ]
+a_deltas <- lcc_deltas_long[  grepl("a" , lcc_deltas_long$Color)   , ]
+b_deltas <- lcc_deltas_long[  grepl("b" , lcc_deltas_long$Color)   , ]
+
+L_deltas$Color <- as.character(L_deltas$Color)
+a_deltas$Color <- as.character(a_deltas$Color)
+b_deltas$Color <- as.character(b_deltas$Color)
+
+names(L_deltas) <- c("Row", "Column", "Sheet", "Color",  "Delta_L")
+names(a_deltas) <- c("Row", "Column", "Sheet", "Color",  "Delta_a")
+names(b_deltas) <- c("Row", "Column", "Sheet", "Color",  "Delta_b")
+
+Lab_deltas <- L_deltas
+Lab_deltas$Color <- gsub("L" , "color" , Lab_deltas$Color)
+Lab_deltas$Delta_a <- a_deltas$Delta_a
+Lab_deltas$Delta_b <- b_deltas$Delta_b
+
+Lab_deltas$Delta_E <- sqrt(Lab_deltas$Delta_L^2 + Lab_deltas$Delta_a^2 + Lab_deltas$Delta_b^2)
+Lab_deltas$colorIndex <- rep(1:64 , each = 546)
+```
+
+```{r}
+#Lab_deltas[1:130 , ]
+dim(Lab_deltas)
+```
+
+
+# 2. Plotting
+
+
+## 2a. $\Delta E$ for each color
+
+First we calculate the mean $\Delta E$ for each color averaged over all the cards and the sheets and plot these values.
+
+```{r}
+library(dplyr)
+by_color <- group_by(Lab_deltas , Color)
+dE_by_color <- as.data.frame(summarize(by_color , mean(Delta_E)))
+names(dE_by_color) <- c("Color" , "mean_dE")
+dE_by_color$colorIndex <- 1:64
+detach(package:dplyr)
+#dE_by_color
+require(ggplot2)
+ggplot(data=dE_by_color , aes(x=colorIndex , y=mean_dE)) + geom_point(
+) + scale_x_continuous(breaks=seq(1,64,8),labels=paste0(c(1:8) , 1))
+```
+
+The above picture shows that the color 32 is an outlier. We can see if this aberrant behavior is consistent over all the cards and sheets or if only some cards have an extremely high value by plotting all the $\Delta E$ (instead of just the mean) with a transparency.
+
+```{r}
+ggplot(data=Lab_deltas , aes(x=colorIndex , y = Delta_E)) + geom_point(alpha = 0.01
+) + scale_x_continuous(breaks=seq(1,64,8),labels=paste0("Row ",c(1:8) , " Col ", 1)) + theme(axis.text.x = element_text(angle=45,hjust=1))
+```
+
+
+The same point can be illustrated by a heat map.
+
+```{r}
+#head(Lab_deltas)
+#Lab_deltas$colorIndex[1:1500]
+#unique(Lab_deltas$colorIndex)
+Lab_deltas$colorIndexRow <- rep(1:8 , each = 546*8)
+Lab_deltas$colorIndexCol <- rep(rep(1:8 , each = 546) , times = 8)
+ggplot(data = Lab_deltas , aes(x=colorIndexCol , y=colorIndexRow , fill = Delta_E)) + geom_tile()+scale_fill_gradient(low="green",high="red", name = expression(Delta*E))+theme_bw()+labs(x="Ccol",y="Crow"
+) + scale_x_continuous(breaks = 1:8) + scale_y_continuous(breaks = 1:8)
+```
+
+
+
+Hence it is best to omit this particular color since its behavior dominates over all other colors.
+
+```{r}
+head(Lab_deltas)
+mean(Lab_deltas$Delta_E[Lab_deltas$colorIndexRow==3 & Lab_deltas$colorIndexCol==2])
+```
+
+## Omit the color 32
+
+```{r}
+Lab_deltas <- Lab_deltas[Lab_deltas$colorIndexRow!=3 | Lab_deltas$colorIndexCol!=2 , ]
+```
+
+```{r}
+ggplot(data = Lab_deltas , aes(x=colorIndexCol , y=colorIndexRow , fill = Delta_E)) + geom_tile()+scale_fill_gradient(low="green",high="red", name = expression(Delta*E))+theme_bw()+labs(x="Ccol",y="Crow"
+) + scale_x_continuous(breaks = (1:8)) + scale_y_continuous(breaks = (1:8))
+```
+
+
+The above picture is not particularly revealing. However, it does show that if we start at the bottom left corner and move right till we reach the end of the row, then start again on the left most square on the upper row and move right till we reach the end of this row, and so on till we reach the top right corner - moving in this sequence and numbering the squares in this sequence from 1 till 63 (not 64 - because we skipped the 32 color, and the sequence corresponds to `color11`, color12`, color13`, .... , `color21`, color22`, color23`, .... , etc. - first index is for `Crow` and second is for `Ccol`), we see that the color 19 has a slightly high value and so do the colors 60 and 62.
+
+So let us take the 63 colors and plot the mean delta E for each of the 42 positions averaged over all the 13 sheets.
+
+```{r}
+require(dplyr)
+by_RowColumnColor <- group_by(Lab_deltas , Row, Column , Color)
+dE_by_RowColumnColor <- as.data.frame(summarize(by_RowColumnColor , mean(Delta_E)))
+dE_by_RowColumnColor$CardIndex <- rep(1:42 , each = 63)
+dE_by_RowColumnColor$ColorIndex <- rep(1:63 , times = 42)
+head(dE_by_RowColumnColor)
+names(dE_by_RowColumnColor) <- c("Row" , "Column" , "Color" , "mean_Delta_E" , "CardIndex" , "ColorIndex")
+```
+
+```{r}
+ggplot(data = dE_by_RowColumnColor , aes(x=ColorIndex , y=CardIndex , fill = mean_Delta_E)) + geom_tile()+scale_fill_gradient(low="green",high="red", name = expression(Delta*E))+theme_bw()+labs(x="Color",y="Card position"
+)# + scale_x_continuous(breaks = (1:8)) + scale_y_continuous(breaks = (1:8))
+```
+
+
+
+This picture sheds insight on the deviant behavior of colors 19, 60 and 62. It shows that these colors are uniformly high across all the card positions.
+
+# How these 3 colors behave across the $42 \times 13$ grid - we need 3 heat maps.
+
+```{r}
+Lab_deltas_34 <- Lab_deltas[Lab_deltas$Color == "color34" , ]
+Lab_deltas_85 <- Lab_deltas[Lab_deltas$Color == "color85" , ]
+Lab_deltas_87 <- Lab_deltas[Lab_deltas$Color == "color87" , ]
+```
+
+```{r}
+Lab_deltas_34$cardIndex <- rep(1:42 , each = 13)
+ggplot(data = Lab_deltas_34 , aes(x=cardIndex , y=Sheet , fill = Delta_E)) + geom_tile()+scale_fill_gradient(low="green",high="red", name = expression(Delta*E),limits=c(min(Lab_deltas_34$Delta_E),max(Lab_deltas_34$Delta_E)))+theme_bw()#+labs(x="Color",y="Card position")
+```
+
+
+```{r}
+Lab_deltas_85$cardIndex <- rep(1:42 , each = 13)
+ggplot(data = Lab_deltas_85 , aes(x=cardIndex , y=Sheet , fill = Delta_E)) + geom_tile()+scale_fill_gradient(low="green",high="red", name = expression(Delta*E),limits=c(min(Lab_deltas_85$Delta_E),max(Lab_deltas_85$Delta_E)))+theme_bw()#+labs(x="Color",y="Card position")
+```
+
+```{r}
+Lab_deltas_87$cardIndex <- rep(1:42 , each = 13)
+ggplot(data = Lab_deltas_87 , aes(x=cardIndex , y=Sheet , fill = Delta_E)) + geom_tile()+scale_fill_gradient(low="green",high="red", name = expression(Delta*E),limits=c(min(Lab_deltas_87$Delta_E),max(Lab_deltas_87$Delta_E)))+theme_bw()#+labs(x="Color",y="Card position")
+```
+
+
+
+
+
+
+
+
+
+
+# Further plots
+
+```{r}
+Lab_deltas_34$theta <- (180.0/pi)*acos(Lab_deltas_34$Delta_L / Lab_deltas_34$Delta_E)
+Lab_deltas_34$phi   <- (180.0/pi)*acos(Lab_deltas_34$Delta_a / sqrt(Lab_deltas_34$Delta_a^2 + Lab_deltas_34$Delta_b^2))
+```
+
+```{r}
+Lab_deltas_85$theta <- (180.0/pi)*acos(Lab_deltas_85$Delta_L / Lab_deltas_85$Delta_E)
+Lab_deltas_85$phi   <- (180.0/pi)*acos(Lab_deltas_85$Delta_a / sqrt(Lab_deltas_85$Delta_a^2 + Lab_deltas_85$Delta_b^2))
+```
+
+```{r}
+Lab_deltas_87$theta <- (180.0/pi)*acos(Lab_deltas_87$Delta_L / Lab_deltas_87$Delta_E)
+Lab_deltas_87$phi   <- (180.0/pi)*acos(Lab_deltas_87$Delta_a / sqrt(Lab_deltas_87$Delta_a^2 + Lab_deltas_87$Delta_b^2))
+```
+
+```{r}
+#- here you need to make the correction for the 3rd, 4th, 7th and 8th octants----
+
+aNbN <- Lab_deltas_34$Delta_a < 0 & Lab_deltas_34$Delta_b < 0
+aPbN <- Lab_deltas_34$Delta_a > 0 & Lab_deltas_34$Delta_b < 0
+Lab_deltas_34$phi[aNbN] <- Lab_deltas_34$phi[aNbN] + 2*(180-Lab_deltas_34$phi[aNbN])
+Lab_deltas_34$phi[aPbN] <- 180*pi - Lab_deltas_34$phi[aPbN]
+
+aNbN <- Lab_deltas_85$Delta_a < 0 & Lab_deltas_85$Delta_b < 0
+aPbN <- Lab_deltas_85$Delta_a > 0 & Lab_deltas_85$Delta_b < 0
+Lab_deltas_85$phi[aNbN] <- Lab_deltas_85$phi[aNbN] + 2*(180-Lab_deltas_85$phi[aNbN])
+Lab_deltas_85$phi[aPbN] <- 2*180 - Lab_deltas_85$phi[aPbN]
+
+aNbN <- Lab_deltas_87$Delta_a < 0 & Lab_deltas_87$Delta_b < 0
+aPbN <- Lab_deltas_87$Delta_a > 0 & Lab_deltas_87$Delta_b < 0
+Lab_deltas_87$phi[aNbN] <- Lab_deltas_87$phi[aNbN] + 2*(180-Lab_deltas_87$phi[aNbN])
+Lab_deltas_87$phi[aPbN] <- 2*180 - Lab_deltas_87$phi[aPbN]
+
+#--------------------------------------------------------------------------------
+```
+
+
+```{r}
+ggplot(data=Lab_deltas_34 , aes(x=theta , y=phi)) + geom_bin2d(bins=20)
+ggplot(data=Lab_deltas_85 , aes(x=theta , y=phi)) + geom_bin2d(bins=20)
+ggplot(data=Lab_deltas_87 , aes(x=theta , y=phi)) + geom_bin2d(bins=20)
+```
+
+
+
+# Trying out rgl
+
+```{r}
+R <- 1
+Lab_deltas_34$xUnit <- R*sin((pi/180)*Lab_deltas_34$theta)*cos((pi/180)*Lab_deltas_34$phi)
+Lab_deltas_34$yUnit <- R*sin((pi/180)*Lab_deltas_34$theta)*sin((pi/180)*Lab_deltas_34$phi)
+Lab_deltas_34$zUnit <- R*cos((pi/180)*Lab_deltas_34$theta)
+Lab_deltas_85$xUnit <- R*sin((pi/180)*Lab_deltas_85$theta)*cos((pi/180)*Lab_deltas_85$phi)
+Lab_deltas_85$yUnit <- R*sin((pi/180)*Lab_deltas_85$theta)*sin((pi/180)*Lab_deltas_85$phi)
+Lab_deltas_85$zUnit <- R*cos((pi/180)*Lab_deltas_85$theta)
+Lab_deltas_87$xUnit <- R*sin((pi/180)*Lab_deltas_87$theta)*cos((pi/180)*Lab_deltas_87$phi)
+Lab_deltas_87$yUnit <- R*sin((pi/180)*Lab_deltas_87$theta)*sin((pi/180)*Lab_deltas_87$phi)
+Lab_deltas_87$zUnit <- R*cos((pi/180)*Lab_deltas_87$theta)
+```
+
+
+
+# added by Pallavi 
+
+```{r}
+par(mfrow= c(1,3))
+
+plot(Lab_deltas_34$Delta_a, Lab_deltas_34$Delta_E, xlim = range(c(Lab_deltas_34$Delta_a, Lab_deltas_34$Delta_b, Lab_deltas_34$Delta_L)))
+plot(Lab_deltas_34$Delta_b, Lab_deltas_34$Delta_E,  xlim = range(c(Lab_deltas_34$Delta_a, Lab_deltas_34$Delta_b, Lab_deltas_34$Delta_L)))
+plot(Lab_deltas_34$Delta_L, Lab_deltas_34$Delta_E, xlim = range(c(Lab_deltas_34$Delta_a, Lab_deltas_34$Delta_b, Lab_deltas_34$Delta_L)))
+
+par(mfrow= c(1,3))
+
+plot(Lab_deltas_85$Delta_a, Lab_deltas_85$Delta_E, xlim = range(c(Lab_deltas_85$Delta_a, Lab_deltas_85$Delta_b, Lab_deltas_85$Delta_L)))
+plot(Lab_deltas_85$Delta_b, Lab_deltas_85$Delta_E,  xlim = range(c(Lab_deltas_85$Delta_a, Lab_deltas_85$Delta_b, Lab_deltas_85$Delta_L)))
+plot(Lab_deltas_85$Delta_L, Lab_deltas_85$Delta_E, xlim = range(c(Lab_deltas_85$Delta_a, Lab_deltas_85$Delta_b, Lab_deltas_85$Delta_L)))
+
+par(mfrow= c(1,3))
+
+plot(Lab_deltas_87$Delta_a, Lab_deltas_87$Delta_E, xlim = range(c(Lab_deltas_87$Delta_a, Lab_deltas_87$Delta_b, Lab_deltas_87$Delta_L)))
+plot(Lab_deltas_87$Delta_b, Lab_deltas_87$Delta_E,  xlim = range(c(Lab_deltas_87$Delta_a, Lab_deltas_87$Delta_b, Lab_deltas_87$Delta_L)))
+plot(Lab_deltas_87$Delta_L, Lab_deltas_87$Delta_E, xlim = range(c(Lab_deltas_87$Delta_a, Lab_deltas_87$Delta_b, Lab_deltas_87$Delta_L)))
+```
+
+
+
+
+# Conclusions
+
+* The color at position `Crow = 3, Ccol = 2` was an extreme outlier in all the cards and sheets. The colors at positions `Crow = 3, Ccol = 4`, `Crow = 8, Ccol = 5`, and `Crow = 8, Ccol = 7` were also deviating consistently across all the 42 cards averaged over the 13 sheets. It was not like only some cards had a very high deviation for these colors.
+
+* The person responsible for the printing has probably given the wrong values of L, a and b for these colors.
+
+* The two dimensional histograms show in which octant the deltas lie, so we know in which direction the errors for a, L and b are.
+
+
+
+
+
+
+# Appendix
+
+```
+require(rgl)
+#https://stackoverflow.com/questions/39778093/how-to-increase-smoothness-of-spheres3d-in-rgl
+sphere1.f <- function(x0 = 0, y0 = 0, z0 = 0, r = 1, n = 101, ...){
+  f <- function(s,t){ 
+    cbind(   r * cos(t)*cos(s) + x0,
+             r *        sin(s) + y0,
+             r * sin(t)*cos(s) + z0)
+  }
+  persp3d(f, slim = c(-pi/2,pi/2), tlim = c(0, 2*pi), n = n, add = T, ...)
+}
+
+
+
+
+
+rgl_add_axes <- function(x, y, z, axis.col = "grey",
+                         xlab = "", ylab="", zlab="", show.plane = TRUE, 
+                         show.bbox = FALSE, bbox.col = c("#333377","black"))
+{ 
+  
+  lim <- function(x){c(-max(abs(x)), max(abs(x))) * 1.1}
+  # Add axes
+  xlim <- lim(x); ylim <- lim(y); zlim <- lim(z)
+  rgl.lines(xlim, c(0, 0), c(0, 0), color = axis.col)
+  rgl.lines(c(0, 0), ylim, c(0, 0), color = axis.col)
+  rgl.lines(c(0, 0), c(0, 0), zlim, color = axis.col)
+  
+  # Add a point at the end of each axes to specify the direction
+  axes <- rbind(c(xlim[2], 0, 0), c(0, ylim[2], 0), 
+                c(0, 0, zlim[2]))
+  rgl.points(axes, color = axis.col, size = 3)
+  
+  # Add axis labels
+  rgl.texts(axes, text = c(xlab, ylab, zlab), color = axis.col,
+            adj = c(0.5, -0.8), size = 2)
+  
+  # Add plane
+  if(show.plane) 
+    xlim <- xlim/1.1; zlim <- zlim /1.1
+  rgl.quads( x = rep(xlim, each = 2), y = c(0, 0, 0, 0),
+             z = c(zlim[1], zlim[2], zlim[2], zlim[1]) , alpha = 0.3)
+  
+  # Add bounding box decoration
+  if(show.bbox){
+    rgl.bbox(color=c(bbox.col[1],bbox.col[2]), alpha = 0.5, 
+             emission=bbox.col[1], specular=bbox.col[1], shininess=5, 
+             xlen = 3, ylen = 3, zlen = 3) 
+  }
+}
+
+
+
+
+rgl_init <- function(new.device = FALSE, bg = "white", width = 640) { 
+  if( new.device | rgl.cur() == 0 ) {
+    rgl.open()
+    par3d(windowRect = 50 + c( 0, 0, width, width ) )
+    rgl.bg(color = bg )
+  }
+  rgl.clear(type = c("shapes", "bboxdeco"))
+  rgl.viewpoint(theta = 15, phi = 20, zoom = 0.7)
+}
+
+
+
+
+rgl_init()
+rgl_add_axes(c(-2,2), c(-2,2), c(-2,2))
+sphere1.f(r = 1,alpha=0.3)
+
+x <- Lab_deltas_34$xUnit
+y <- Lab_deltas_34$yUnit
+z <- Lab_deltas_34$zUnit
+
+for (i in 1:length(x)) {
+  rgl.lines(c(0,y[i]),c(0,z[i]),c(0,x[i]),color="red")
+}
+rgl.points(y,z,x,color="black")
+rgl.texts(0,0.1,2.6,paste0(intToUtf8(916),"a"),color="black")
+rgl.texts(2.2,0.1,0,paste0(intToUtf8(916),"b"),color="black")
+rgl.texts(0.1,2.1,-0.1,paste0(intToUtf8(916),"L"),color="black")
+#rgl.snapshot("plot.png") 
+
+x <- Lab_deltas_85$xUnit
+y <- Lab_deltas_85$yUnit
+z <- Lab_deltas_85$zUnit
+for (i in 1:length(x)) {
+  rgl.lines(c(0,y[i]),c(0,z[i]),c(0,x[i]),color="yellow")
+}
+rgl.points(y,z,x,color="black")
+
+
+x <- Lab_deltas_87$xUnit
+y <- Lab_deltas_87$yUnit
+z <- Lab_deltas_87$zUnit
+for (i in 1:length(x)) {
+  rgl.lines(c(0,y[i]),c(0,z[i]),c(0,x[i]),color="blue")
+}
+rgl.points(y,z,x,color="black")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
